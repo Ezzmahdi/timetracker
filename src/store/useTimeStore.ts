@@ -10,6 +10,13 @@ export interface Tube {
   time_entry_id?: string; // DB time entry ID
 }
 
+export interface Goal {
+  id?: string; // DB goal ID
+  activity_id: string;
+  target_hours: number;
+  period_type: ViewMode;
+}
+
 export type ViewMode = "week" | "day";
 
 interface PeriodData {
@@ -20,6 +27,7 @@ interface TimeStore {
   mode: ViewMode;
   currentDate: string; // ISO date string YYYY-MM-DD
   periods: Record<string, PeriodData>; // key = period key
+  goals: Goal[]; // all goals for current user
   userId: string | null;
   loading: boolean;
   initialized: boolean;
@@ -28,13 +36,16 @@ interface TimeStore {
   setMode: (mode: ViewMode) => void;
   goToday: () => void;
   navigate: (delta: number) => void;
-  addTube: (name: string) => void;
-  removeTube: (id: string) => void;
-  renameTube: (id: string, name: string) => void;
-  setHours: (id: string, hours: number) => void;
-  addHours: (id: string, hours: number) => void;
-  removeHours: (id: string, hours: number) => void;
-  resetPeriod: () => void;
+  addTube: (name: string) => Promise<void> | void;
+  removeTube: (id: string) => Promise<void> | void;
+  renameTube: (id: string, name: string) => Promise<void> | void;
+  setHours: (id: string, hours: number) => Promise<void> | void;
+  addHours: (id: string, hours: number) => Promise<void> | void;
+  removeHours: (id: string, hours: number) => Promise<void> | void;
+  resetPeriod: () => Promise<void> | void;
+  setGoal: (activityId: string, targetHours: number, periodType: ViewMode) => Promise<void> | void;
+  removeGoal: (activityId: string, periodType: ViewMode) => Promise<void> | void;
+  getGoal: (activityId: string, periodType: ViewMode) => Goal | undefined;
   loadFromDb: () => Promise<void>;
   syncToDb: () => Promise<void>;
 }
@@ -114,12 +125,27 @@ function addDays(date: string, n: number): string {
   return d.toISOString().slice(0, 10);
 }
 
+// --- Debounced DB write for hours ---
+const hoursTimers: Record<string, ReturnType<typeof setTimeout>> = {};
+function debouncedHoursSync(entryId: string, hours: number, delay = 500) {
+  if (hoursTimers[entryId]) clearTimeout(hoursTimers[entryId]);
+  hoursTimers[entryId] = setTimeout(async () => {
+    try {
+      await supabase.from("time_entries").update({ hours }).eq("id", entryId);
+    } catch (err) {
+      console.error("Failed to sync hours to DB:", err);
+    }
+    delete hoursTimers[entryId];
+  }, delay);
+}
+
 // --- Store ---
 
 export const useTimeStore = create<TimeStore>((set, get) => ({
   mode: "week",
   currentDate: todayStr(),
   periods: {},
+  goals: [],
   userId: null,
   loading: false,
   initialized: false,
@@ -269,6 +295,92 @@ export const useTimeStore = create<TimeStore>((set, get) => ({
   setHours: async (id, hours) => {
     const { mode, currentDate, periods, userId } = get();
     const key = periodKey(currentDate, mode);
+    const weekKey = periodKey(currentDate, "week");
+    
+    // In day mode, we work with week activities but store day-specific hours
+    if (mode === "day") {
+      const weekPd = periods[weekKey];
+      const dayPd = periods[key] || { tubes: [] };
+      const weekTube = weekPd?.tubes.find((t) => t.id === id);
+      if (!weekTube) return;
+      
+      const max = maxHours(mode);
+      const dayTubes = weekPd?.tubes.map(wt => {
+        const dt = dayPd.tubes.find(d => d.activity_id === wt.activity_id);
+        return dt || { ...wt, hours: 0 };
+      }) || [];
+      const otherUsed = dayTubes.reduce((s, t) => s + (t.id === id ? 0 : t.hours), 0);
+      const clamped = Math.max(0, Math.min(hours, max - otherUsed));
+      
+      const dayEntry = dayPd.tubes.find((t) => t.activity_id === weekTube.activity_id);
+      
+      if (dayEntry) {
+        set({
+          periods: {
+            ...periods,
+            [key]: {
+              tubes: dayPd.tubes.map((t) =>
+                t.activity_id === weekTube.activity_id ? { ...t, hours: clamped } : t
+              ),
+            },
+          },
+        });
+        
+        if (userId && dayEntry.time_entry_id) {
+          debouncedHoursSync(dayEntry.time_entry_id, clamped);
+        }
+      } else {
+        const newId = crypto.randomUUID();
+        const newTube = { ...weekTube, id: newId, hours: clamped, time_entry_id: undefined };
+        
+        set({
+          periods: {
+            ...periods,
+            [key]: {
+              tubes: [...dayPd.tubes, newTube],
+            },
+          },
+        });
+        
+        if (userId && weekTube.activity_id) {
+          try {
+            const { data: entry, error } = await supabase
+              .from("time_entries")
+              .insert({
+                user_id: userId,
+                activity_id: weekTube.activity_id,
+                period_key: key,
+                period_type: "day",
+                hours: clamped,
+              })
+              .select()
+              .single();
+            
+            if (!error && entry) {
+              const updatedPeriods = get().periods;
+              const updatedDayPd = updatedPeriods[key];
+              if (updatedDayPd) {
+                set({
+                  periods: {
+                    ...updatedPeriods,
+                    [key]: {
+                      tubes: updatedDayPd.tubes.map((t) =>
+                        t.id === newId ? { ...t, time_entry_id: entry.id } : t
+                      ),
+                    },
+                  },
+                });
+              }
+            }
+          } catch (err) {
+            console.error("Failed to create day entry in DB:", err);
+          }
+        }
+      }
+      return;
+    }
+    
+    // Week mode
     const pd = periods[key];
     if (!pd) return;
     const max = maxHours(mode);
@@ -277,7 +389,6 @@ export const useTimeStore = create<TimeStore>((set, get) => ({
     
     const tube = pd.tubes.find((t) => t.id === id);
     
-    // Optimistic update
     set({
       periods: {
         ...periods,
@@ -289,22 +400,28 @@ export const useTimeStore = create<TimeStore>((set, get) => ({
       },
     });
 
-    // Sync to DB
     if (userId && tube?.time_entry_id) {
-      try {
-        await supabase
-          .from("time_entries")
-          .update({ hours: clamped })
-          .eq("id", tube.time_entry_id);
-      } catch (err) {
-        console.error("Failed to sync setHours to DB:", err);
-      }
+      debouncedHoursSync(tube.time_entry_id, clamped);
     }
   },
 
   addHours: async (id, hours) => {
-    const { mode, currentDate, periods, userId } = get();
+    const { mode, currentDate, periods } = get();
     const key = periodKey(currentDate, mode);
+    const weekKey = periodKey(currentDate, "week");
+    
+    if (mode === "day") {
+      const weekPd = periods[weekKey];
+      const dayPd = periods[key] || { tubes: [] };
+      const weekTube = weekPd?.tubes.find((t) => t.id === id);
+      if (!weekTube) return;
+      
+      const dayEntry = dayPd.tubes.find((t) => t.activity_id === weekTube.activity_id);
+      const currentHours = dayEntry?.hours || 0;
+      await get().setHours(id, currentHours + hours);
+      return;
+    }
+    
     const pd = periods[key];
     if (!pd) return;
     const max = maxHours(mode);
@@ -315,7 +432,6 @@ export const useTimeStore = create<TimeStore>((set, get) => ({
     const tube = pd.tubes.find((t) => t.id === id);
     const newHours = (tube?.hours || 0) + toAdd;
     
-    // Optimistic update
     set({
       periods: {
         ...periods,
@@ -327,29 +443,34 @@ export const useTimeStore = create<TimeStore>((set, get) => ({
       },
     });
 
-    // Sync to DB
-    if (userId && tube?.time_entry_id) {
-      try {
-        await supabase
-          .from("time_entries")
-          .update({ hours: newHours })
-          .eq("id", tube.time_entry_id);
-      } catch (err) {
-        console.error("Failed to sync addHours to DB:", err);
-      }
+    if (tube?.time_entry_id) {
+      debouncedHoursSync(tube.time_entry_id, newHours);
     }
   },
 
   removeHours: async (id, hours) => {
-    const { mode, currentDate, periods, userId } = get();
+    const { mode, currentDate, periods } = get();
     const key = periodKey(currentDate, mode);
+    const weekKey = periodKey(currentDate, "week");
+    
+    if (mode === "day") {
+      const weekPd = periods[weekKey];
+      const dayPd = periods[key] || { tubes: [] };
+      const weekTube = weekPd?.tubes.find((t) => t.id === id);
+      if (!weekTube) return;
+      
+      const dayEntry = dayPd.tubes.find((t) => t.activity_id === weekTube.activity_id);
+      const currentHours = dayEntry?.hours || 0;
+      await get().setHours(id, Math.max(0, currentHours - hours));
+      return;
+    }
+    
     const pd = periods[key];
     if (!pd) return;
 
     const tube = pd.tubes.find((t) => t.id === id);
     const newHours = Math.max(0, (tube?.hours || 0) - hours);
     
-    // Optimistic update
     set({
       periods: {
         ...periods,
@@ -361,16 +482,8 @@ export const useTimeStore = create<TimeStore>((set, get) => ({
       },
     });
 
-    // Sync to DB
-    if (userId && tube?.time_entry_id) {
-      try {
-        await supabase
-          .from("time_entries")
-          .update({ hours: newHours })
-          .eq("id", tube.time_entry_id);
-      } catch (err) {
-        console.error("Failed to sync removeHours to DB:", err);
-      }
+    if (tube?.time_entry_id) {
+      debouncedHoursSync(tube.time_entry_id, newHours);
     }
   },
 
@@ -381,24 +494,107 @@ export const useTimeStore = create<TimeStore>((set, get) => ({
     colorIdx = 0;
     const { [key]: _, ...rest } = periods;
     
-    // Optimistic update
     set({ periods: rest });
 
-    // Sync to DB - delete all time entries and activities for this period
     if (userId && pd) {
       try {
-        for (const tube of pd.tubes) {
-          if (tube.time_entry_id) {
-            await supabase.from("time_entries").delete().eq("id", tube.time_entry_id);
-          }
-          if (tube.activity_id) {
-            await supabase.from("activities").delete().eq("id", tube.activity_id);
-          }
+        const timeEntryIds = pd.tubes.map(t => t.time_entry_id).filter(Boolean) as string[];
+        const activityIds = pd.tubes.map(t => t.activity_id).filter(Boolean) as string[];
+        
+        if (timeEntryIds.length > 0) {
+          await supabase.from("time_entries").delete().in("id", timeEntryIds);
         }
+        if (activityIds.length > 0) {
+          await supabase.from("goals").delete().in("activity_id", activityIds);
+          await supabase.from("activities").delete().in("id", activityIds);
+        }
+        
+        // Remove goals for deleted activities from local state
+        set({ goals: get().goals.filter(g => !activityIds.includes(g.activity_id)) });
       } catch (err) {
         console.error("Failed to sync resetPeriod to DB:", err);
       }
     }
+  },
+
+  setGoal: async (activityId, targetHours, periodType) => {
+    const { userId, goals } = get();
+    
+    const existing = goals.find(g => g.activity_id === activityId && g.period_type === periodType);
+    
+    if (existing) {
+      // Update existing goal optimistically
+      set({
+        goals: goals.map(g =>
+          g.activity_id === activityId && g.period_type === periodType
+            ? { ...g, target_hours: targetHours }
+            : g
+        ),
+      });
+      
+      if (userId && userId !== "demo" && existing.id) {
+        try {
+          await supabase
+            .from("goals")
+            .update({ target_hours: targetHours })
+            .eq("id", existing.id);
+        } catch (err) {
+          console.error("Failed to update goal in DB:", err);
+        }
+      }
+    } else {
+      // Create new goal optimistically
+      const newGoal: Goal = { activity_id: activityId, target_hours: targetHours, period_type: periodType };
+      set({ goals: [...goals, newGoal] });
+      
+      if (userId && userId !== "demo") {
+        try {
+          const { data, error } = await supabase
+            .from("goals")
+            .insert({
+              user_id: userId,
+              activity_id: activityId,
+              target_hours: targetHours,
+              period_type: periodType,
+            })
+            .select()
+            .single();
+          
+          if (!error && data) {
+            set({
+              goals: get().goals.map(g =>
+                g.activity_id === activityId && g.period_type === periodType && !g.id
+                  ? { ...g, id: data.id }
+                  : g
+              ),
+            });
+          }
+        } catch (err) {
+          console.error("Failed to create goal in DB:", err);
+        }
+      }
+    }
+  },
+
+  removeGoal: async (activityId, periodType) => {
+    const { userId, goals } = get();
+    const existing = goals.find(g => g.activity_id === activityId && g.period_type === periodType);
+    
+    set({
+      goals: goals.filter(g => !(g.activity_id === activityId && g.period_type === periodType)),
+    });
+    
+    if (userId && userId !== "demo" && existing?.id) {
+      try {
+        await supabase.from("goals").delete().eq("id", existing.id);
+      } catch (err) {
+        console.error("Failed to delete goal from DB:", err);
+      }
+    }
+  },
+
+  getGoal: (activityId, periodType) => {
+    return get().goals.find(g => g.activity_id === activityId && g.period_type === periodType);
   },
 
   loadFromDb: async () => {
@@ -407,28 +603,34 @@ export const useTimeStore = create<TimeStore>((set, get) => ({
 
     set({ loading: true });
     try {
-      // Fetch all time entries with their activities
-      const { data: entries, error } = await supabase
-        .from("time_entries")
-        .select(`
-          id,
-          period_key,
-          period_type,
-          hours,
-          activities (
+      // Fetch time entries and goals in parallel
+      const [entriesResult, goalsResult] = await Promise.all([
+        supabase
+          .from("time_entries")
+          .select(`
             id,
-            name,
-            color
-          )
-        `)
-        .eq("user_id", userId);
+            period_key,
+            period_type,
+            hours,
+            activities (
+              id,
+              name,
+              color
+            )
+          `)
+          .eq("user_id", userId),
+        supabase
+          .from("goals")
+          .select("id, activity_id, target_hours, period_type")
+          .eq("user_id", userId),
+      ]);
 
-      if (error) throw error;
+      if (entriesResult.error) throw entriesResult.error;
 
       // Build periods from DB data
       const periods: Record<string, PeriodData> = {};
       
-      for (const entry of entries || []) {
+      for (const entry of entriesResult.data || []) {
         const key = entry.period_key;
         if (!periods[key]) {
           periods[key] = { tubes: [] };
@@ -437,7 +639,7 @@ export const useTimeStore = create<TimeStore>((set, get) => ({
         const activity = entry.activities as unknown as { id: string; name: string; color: string } | null;
         if (activity) {
           periods[key].tubes.push({
-            id: crypto.randomUUID(), // Local ID for React keys
+            id: crypto.randomUUID(),
             name: activity.name,
             hours: entry.hours,
             color: activity.color,
@@ -447,7 +649,15 @@ export const useTimeStore = create<TimeStore>((set, get) => ({
         }
       }
 
-      set({ periods, initialized: true });
+      // Build goals from DB data
+      const goals: Goal[] = (goalsResult.data || []).map((g: { id: string; activity_id: string; target_hours: number; period_type: string }) => ({
+        id: g.id,
+        activity_id: g.activity_id,
+        target_hours: g.target_hours,
+        period_type: g.period_type as ViewMode,
+      }));
+
+      set({ periods, goals, initialized: true });
     } catch (err) {
       console.error("Failed to load from DB:", err);
     } finally {
@@ -456,7 +666,6 @@ export const useTimeStore = create<TimeStore>((set, get) => ({
   },
 
   syncToDb: async () => {
-    // This is handled by individual operations with optimistic updates
-    // Can be used for manual full sync if needed
+    // Handled by individual operations with optimistic updates
   },
 }));

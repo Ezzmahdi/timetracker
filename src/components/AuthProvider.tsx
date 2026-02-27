@@ -7,7 +7,6 @@ import { useTimeStore } from "@/store/useTimeStore";
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isReady, setIsReady] = useState(false);
   const setUserId = useTimeStore((s) => s.setUserId);
-  const loading = useTimeStore((s) => s.loading);
 
   useEffect(() => {
     // Check current session
@@ -29,7 +28,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   if (!isReady) {
     return (
       <div className="min-h-screen bg-[#f8f8fa] flex items-center justify-center">
-        <div className="text-gray-400 text-sm">Loading...</div>
+        <div className="flex flex-col items-center gap-3">
+          <h1 className="text-lg font-black tracking-tight text-gray-900 select-none">
+            tt<span className="text-indigo-500">.</span>
+          </h1>
+          <div className="w-32 h-1 bg-gray-200 rounded-full overflow-hidden">
+            <div className="h-full w-1/3 bg-indigo-400 rounded-full animate-pulse" />
+          </div>
+        </div>
       </div>
     );
   }

@@ -1,7 +1,7 @@
 "use client";
 
-import { useRef, useMemo } from "react";
-import { Canvas, useFrame } from "@react-three/fiber";
+import { useRef, useMemo, memo } from "react";
+import { Canvas, useFrame, invalidate } from "@react-three/fiber";
 import { Edges } from "@react-three/drei";
 import * as THREE from "three";
 
@@ -22,15 +22,17 @@ function Tube3D({ fillPercent, color }: Tube3DProps) {
   const iR = R - 0.015;
 
   // Closed cylinder for glass body (with caps for edge detection)
-  const glassCylGeo = useMemo(() => new THREE.CylinderGeometry(R, R, H, 48, 1, false), []);
+  const glassCylGeo = useMemo(() => new THREE.CylinderGeometry(R, R, H, 32, 1, false), []);
   // Bottom hemisphere
   const bottomCapGeo = useMemo(
-    () => new THREE.SphereGeometry(R, 48, 24, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2),
+    () => new THREE.SphereGeometry(R, 32, 16, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2),
     []
   );
 
   useFrame((_, dt) => {
-    animFill.current += (fillPercent - animFill.current) * Math.min(dt * 4, 1);
+    const diff = fillPercent - animFill.current;
+    if (Math.abs(diff) < 0.001) return; // stop animating when settled
+    animFill.current += diff * Math.min(dt * 4, 1);
     const f = Math.max(0, Math.min(1, animFill.current));
     const liqH = f * (H + R * 0.5);
 
@@ -42,6 +44,7 @@ function Tube3D({ fillPercent, color }: Tube3DProps) {
       surfaceRef.current.position.y = bottom - R * 0.25 + liqH;
       surfaceRef.current.visible = f > 0.005;
     }
+    invalidate(); // request next frame while animating
   });
 
   return (
@@ -153,15 +156,18 @@ interface TubeCanvasProps {
   color: string;
 }
 
-export default function TubeCanvas({ hours, maxHours, color }: TubeCanvasProps) {
+function TubeCanvas({ hours, maxHours, color }: TubeCanvasProps) {
   const fill = maxHours > 0 ? hours / maxHours : 0;
   return (
     <Canvas
       camera={{ position: [0, -0.2, 5.2], fov: 28 }}
       gl={{ antialias: true, alpha: true }}
+      frameloop="demand"
       style={{ background: "transparent" }}
     >
       <Tube3D fillPercent={fill} color={color} />
     </Canvas>
   );
 }
+
+export default memo(TubeCanvas);

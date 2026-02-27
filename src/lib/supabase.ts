@@ -33,6 +33,16 @@ export interface TimeEntry {
   updated_at: string;
 }
 
+export interface Goal {
+  id: string;
+  user_id: string;
+  activity_id: string;
+  target_hours: number;
+  period_type: "day" | "week";
+  created_at: string;
+  updated_at: string;
+}
+
 export interface AnalyticsSummary {
   user_id: string;
   period_key: string;
