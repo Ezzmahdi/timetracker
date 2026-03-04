@@ -415,23 +415,13 @@ export const useTimeStore = create<TimeStore>((set, get) => ({
       const weekPd = periods[weekKey];
       const dayPd = periods[key] || { tubes: [] };
       
-      // The id could be either a week tube ID or a day entry ID
-      let weekTube = weekPd?.tubes.find((t) => t.id === id);
-      let dayEntry = dayPd.tubes.find((t) => t.id === id);
-      
-      // If we found a day entry by ID, find the corresponding week tube
-      if (!weekTube && dayEntry) {
-        weekTube = weekPd?.tubes.find((t) => t.activity_id === dayEntry!.activity_id);
-      }
-      // If we found a week tube, find the corresponding day entry
-      if (weekTube && !dayEntry) {
-        dayEntry = dayPd.tubes.find((t) => t.activity_id === weekTube!.activity_id);
-      }
-      
+      // UI always passes week tube ID now
+      const weekTube = weekPd?.tubes.find((t) => t.id === id)
+        || weekPd?.tubes.find((t) => t.activity_id && dayPd.tubes.find(d => d.id === id)?.activity_id === t.activity_id);
       if (!weekTube) return;
       
+      const dayEntry = dayPd.tubes.find((t) => t.activity_id === weekTube.activity_id);
       const currentHours = dayEntry?.hours || 0;
-      // Always pass the week tube ID to setHours for consistency
       await get().setHours(weekTube.id, currentHours + hours);
       return;
     }
@@ -471,23 +461,13 @@ export const useTimeStore = create<TimeStore>((set, get) => ({
       const weekPd = periods[weekKey];
       const dayPd = periods[key] || { tubes: [] };
       
-      // The id could be either a week tube ID or a day entry ID
-      let weekTube = weekPd?.tubes.find((t) => t.id === id);
-      let dayEntry = dayPd.tubes.find((t) => t.id === id);
-      
-      // If we found a day entry by ID, find the corresponding week tube
-      if (!weekTube && dayEntry) {
-        weekTube = weekPd?.tubes.find((t) => t.activity_id === dayEntry!.activity_id);
-      }
-      // If we found a week tube, find the corresponding day entry
-      if (weekTube && !dayEntry) {
-        dayEntry = dayPd.tubes.find((t) => t.activity_id === weekTube!.activity_id);
-      }
-      
+      // UI always passes week tube ID now
+      const weekTube = weekPd?.tubes.find((t) => t.id === id)
+        || weekPd?.tubes.find((t) => t.activity_id && dayPd.tubes.find(d => d.id === id)?.activity_id === t.activity_id);
       if (!weekTube) return;
       
+      const dayEntry = dayPd.tubes.find((t) => t.activity_id === weekTube.activity_id);
       const currentHours = dayEntry?.hours || 0;
-      // Always pass the week tube ID to setHours for consistency
       await get().setHours(weekTube.id, Math.max(0, currentHours - hours));
       return;
     }

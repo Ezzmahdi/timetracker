@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo } from "react";
-import dynamic from "next/dynamic";
 import {
   useTimeStore,
   periodKey,
@@ -12,11 +11,7 @@ import {
   type Tube,
 } from "@/store/useTimeStore";
 import { SignOutButton } from "@/components/AuthProvider";
-
-const TubeCanvas = dynamic(() => import("@/components/WaterTube"), {
-  ssr: false,
-  loading: () => <div className="h-full" />,
-});
+import TubeCanvas from "@/components/WaterTube";
 
 // --- Goal progress ring SVG ---
 function GoalRing({ progress, color, size = 36 }: { progress: number; color: string; size?: number }) {
@@ -166,14 +161,19 @@ export default function Home() {
   const dayTubes = periods[key]?.tubes ?? [];
   
   // In day mode, use week activities but with day-specific hours
+  // Always use week tube ID as canonical ID so +/- buttons work correctly
   const tubes = useMemo(() => {
-    const unsorted = mode === "day" 
-      ? weekTubes.map(weekTube => {
-          const dayEntry = dayTubes.find(dt => dt.activity_id === weekTube.activity_id);
-          return dayEntry || { ...weekTube, hours: 0, time_entry_id: undefined };
-        })
-      : periods[key]?.tubes ?? [];
-    return [...unsorted].sort((a, b) => b.hours - a.hours);
+    if (mode === "day") {
+      return weekTubes.map(weekTube => {
+        const dayEntry = dayTubes.find(dt => dt.activity_id === weekTube.activity_id);
+        return {
+          ...weekTube,
+          hours: dayEntry?.hours ?? 0,
+          time_entry_id: dayEntry?.time_entry_id,
+        };
+      });
+    }
+    return periods[key]?.tubes ?? [];
   }, [mode, weekTubes, dayTubes, periods, key]);
 
   const max = maxHours(mode);
@@ -277,19 +277,19 @@ export default function Home() {
           <div className="flex items-center gap-1">
             <button
               onClick={() => navigate(-1)}
-              className="w-7 h-7 rounded-md hover:bg-gray-100 text-gray-400 flex items-center justify-center transition-colors text-sm"
+              className="w-9 h-9 rounded-lg hover:bg-gray-100 active:bg-gray-200 text-gray-400 flex items-center justify-center transition-colors text-lg select-none"
             >
               &lsaquo;
             </button>
             <button
               onClick={isCurrent ? undefined : goToday}
-              className="text-[12px] sm:text-[13px] font-semibold text-gray-900 px-1.5 py-1 rounded-md hover:bg-gray-50 transition-colors min-w-0 sm:min-w-[140px] text-center"
+              className="text-[12px] sm:text-[13px] font-semibold text-gray-900 px-2 py-1.5 rounded-md hover:bg-gray-50 transition-colors min-w-0 sm:min-w-[160px] text-center select-none"
             >
               {label}
             </button>
             <button
               onClick={() => navigate(1)}
-              className="w-7 h-7 rounded-md hover:bg-gray-100 text-gray-400 flex items-center justify-center transition-colors text-sm"
+              className="w-9 h-9 rounded-lg hover:bg-gray-100 active:bg-gray-200 text-gray-400 flex items-center justify-center transition-colors text-lg select-none"
             >
               &rsaquo;
             </button>
@@ -449,7 +449,7 @@ export default function Home() {
                     <button
                       onClick={() => removeHours(tube.id, 1)}
                       disabled={tube.hours <= 0}
-                      className="w-6 h-6 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100 text-[11px] font-bold disabled:opacity-10 disabled:cursor-not-allowed transition-all flex items-center justify-center"
+                      className="w-7 h-7 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100 active:bg-gray-200 text-xs font-bold disabled:opacity-10 disabled:cursor-not-allowed transition-all flex items-center justify-center select-none"
                     >
                       &minus;
                     </button>
@@ -458,7 +458,7 @@ export default function Home() {
                         key={h}
                         onClick={() => addHours(tube.id, h)}
                         disabled={remainingHours <= 0}
-                        className="px-1.5 h-6 text-[9px] rounded text-gray-300 hover:text-gray-500 hover:bg-gray-100 disabled:opacity-10 disabled:cursor-not-allowed transition-all font-bold"
+                        className="px-1.5 h-7 text-[10px] rounded-md text-gray-300 hover:text-gray-500 hover:bg-gray-100 active:bg-gray-200 disabled:opacity-10 disabled:cursor-not-allowed transition-all font-bold select-none"
                       >
                         +{h}
                       </button>
@@ -466,7 +466,7 @@ export default function Home() {
                     <button
                       onClick={() => addHours(tube.id, 1)}
                       disabled={remainingHours <= 0}
-                      className="w-6 h-6 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100 text-[11px] font-bold disabled:opacity-10 disabled:cursor-not-allowed transition-all flex items-center justify-center"
+                      className="w-7 h-7 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100 active:bg-gray-200 text-xs font-bold disabled:opacity-10 disabled:cursor-not-allowed transition-all flex items-center justify-center select-none"
                     >
                       +
                     </button>

@@ -1,154 +1,6 @@
 "use client";
 
-import { useRef, useMemo, memo } from "react";
-import { Canvas, useFrame, invalidate } from "@react-three/fiber";
-import { Edges } from "@react-three/drei";
-import * as THREE from "three";
-
-interface Tube3DProps {
-  fillPercent: number;
-  color: string;
-}
-
-function Tube3D({ fillPercent, color }: Tube3DProps) {
-  const liquidRef = useRef<THREE.Mesh>(null);
-  const surfaceRef = useRef<THREE.Mesh>(null);
-  const animFill = useRef(0);
-
-  const R = 0.28;
-  const H = 2.0;
-  const bottom = -H / 2;
-  const top = H / 2;
-  const iR = R - 0.015;
-
-  // Closed cylinder for glass body (with caps for edge detection)
-  const glassCylGeo = useMemo(() => new THREE.CylinderGeometry(R, R, H, 32, 1, false), []);
-  // Bottom hemisphere
-  const bottomCapGeo = useMemo(
-    () => new THREE.SphereGeometry(R, 32, 16, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2),
-    []
-  );
-
-  useFrame((_, dt) => {
-    const diff = fillPercent - animFill.current;
-    if (Math.abs(diff) < 0.001) return; // stop animating when settled
-    animFill.current += diff * Math.min(dt * 4, 1);
-    const f = Math.max(0, Math.min(1, animFill.current));
-    const liqH = f * (H + R * 0.5);
-
-    if (liquidRef.current) {
-      liquidRef.current.scale.set(1, Math.max(0.001, liqH), 1);
-      liquidRef.current.position.y = bottom - R * 0.25 + liqH / 2;
-    }
-    if (surfaceRef.current) {
-      surfaceRef.current.position.y = bottom - R * 0.25 + liqH;
-      surfaceRef.current.visible = f > 0.005;
-    }
-    invalidate(); // request next frame while animating
-  });
-
-  return (
-    <>
-      <ambientLight intensity={0.8} />
-      <directionalLight position={[3, 5, 4]} intensity={1.8} />
-      <directionalLight position={[-2, 2, -3]} intensity={0.3} />
-
-      <group rotation={[0.05, 0.25, 0]}>
-        {/* Glass cylinder body — open top, capped bottom hidden by hemisphere */}
-        <mesh geometry={glassCylGeo}>
-          <meshStandardMaterial
-            color="#c8d0dc"
-            transparent
-            opacity={0.12}
-            roughness={0.0}
-            metalness={0.4}
-            side={THREE.DoubleSide}
-            depthWrite={false}
-          />
-          <Edges threshold={15} color="#9ca3af" linewidth={1} />
-        </mesh>
-
-        {/* Rounded bottom hemisphere */}
-        <mesh position={[0, bottom, 0]} geometry={bottomCapGeo}>
-          <meshStandardMaterial
-            color="#c8d0dc"
-            transparent
-            opacity={0.1}
-            roughness={0.0}
-            metalness={0.4}
-            side={THREE.DoubleSide}
-            depthWrite={false}
-          />
-          <Edges threshold={15} color="#9ca3af" linewidth={1} />
-        </mesh>
-
-        {/* Top rim — solid visible torus */}
-        <mesh position={[0, top, 0]} rotation={[Math.PI / 2, 0, 0]}>
-          <torusGeometry args={[R, 0.02, 16, 64]} />
-          <meshStandardMaterial color="#7a8599" roughness={0.15} metalness={0.3} />
-        </mesh>
-
-        {/* Lip flare ring */}
-        <mesh position={[0, top + 0.015, 0]} rotation={[Math.PI / 2, 0, 0]}>
-          <torusGeometry args={[R + 0.012, 0.012, 8, 64]} />
-          <meshStandardMaterial
-            color="#8a94a8"
-            transparent
-            opacity={0.6}
-            roughness={0.1}
-          />
-        </mesh>
-
-        {/* Highlight streak on glass */}
-        <mesh position={[R * 0.72, 0, R * 0.3]} rotation={[0, -0.35, 0]}>
-          <planeGeometry args={[0.015, H * 0.75]} />
-          <meshBasicMaterial color="#ffffff" transparent opacity={0.2} side={THREE.DoubleSide} />
-        </mesh>
-        <mesh position={[R * 0.55, 0, R * 0.55]} rotation={[0, -0.6, 0]}>
-          <planeGeometry args={[0.008, H * 0.5]} />
-          <meshBasicMaterial color="#ffffff" transparent opacity={0.1} side={THREE.DoubleSide} />
-        </mesh>
-
-        {/* Liquid body */}
-        <mesh ref={liquidRef}>
-          <cylinderGeometry args={[iR, iR, 1, 32]} />
-          <meshStandardMaterial
-            color={color}
-            transparent
-            opacity={0.88}
-            roughness={0.3}
-            emissive={color}
-            emissiveIntensity={0.15}
-          />
-        </mesh>
-
-        {/* Liquid surface */}
-        <mesh ref={surfaceRef} rotation={[-Math.PI / 2, 0, 0]}>
-          <circleGeometry args={[iR, 32]} />
-          <meshStandardMaterial
-            color="#ffffff"
-            transparent
-            opacity={0.35}
-            side={THREE.DoubleSide}
-          />
-        </mesh>
-
-        {/* Bottom liquid hemisphere */}
-        <mesh position={[0, bottom, 0]}>
-          <sphereGeometry args={[iR, 32, 16, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2]} />
-          <meshStandardMaterial
-            color={color}
-            transparent
-            opacity={0.88}
-            roughness={0.3}
-            emissive={color}
-            emissiveIntensity={0.15}
-          />
-        </mesh>
-      </group>
-    </>
-  );
-}
+import { memo, useEffect, useRef } from "react";
 
 interface TubeCanvasProps {
   hours: number;
@@ -156,17 +8,189 @@ interface TubeCanvasProps {
   color: string;
 }
 
+function hexToRgb(hex: string): { r: number; g: number; b: number } {
+  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  return result
+    ? { r: parseInt(result[1], 16), g: parseInt(result[2], 16), b: parseInt(result[3], 16) }
+    : { r: 99, g: 102, b: 241 };
+}
+
 function TubeCanvas({ hours, maxHours, color }: TubeCanvasProps) {
-  const fill = maxHours > 0 ? hours / maxHours : 0;
+  const fillTarget = maxHours > 0 ? Math.min(1, hours / maxHours) : 0;
+  const fillRef = useRef(0);
+  const elRef = useRef<HTMLDivElement>(null);
+  const rafRef = useRef<number>(0);
+
+  useEffect(() => {
+    let running = true;
+    const animate = () => {
+      if (!running) return;
+      const diff = fillTarget - fillRef.current;
+      if (Math.abs(diff) < 0.002) {
+        fillRef.current = fillTarget;
+        if (elRef.current) {
+          elRef.current.style.setProperty("--fill", `${fillTarget * 100}%`);
+        }
+        return;
+      }
+      fillRef.current += diff * 0.12;
+      if (elRef.current) {
+        elRef.current.style.setProperty("--fill", `${fillRef.current * 100}%`);
+      }
+      rafRef.current = requestAnimationFrame(animate);
+    };
+    rafRef.current = requestAnimationFrame(animate);
+    return () => {
+      running = false;
+      cancelAnimationFrame(rafRef.current);
+    };
+  }, [fillTarget]);
+
+  const rgb = hexToRgb(color);
+  const lightColor = `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.18)`;
+  const medColor = `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.7)`;
+  const fullColor = `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.85)`;
+
   return (
-    <Canvas
-      camera={{ position: [0, -0.2, 5.2], fov: 28 }}
-      gl={{ antialias: true, alpha: true }}
-      frameloop="demand"
-      style={{ background: "transparent" }}
-    >
-      <Tube3D fillPercent={fill} color={color} />
-    </Canvas>
+    <div ref={elRef} className="relative w-full h-full flex items-end justify-center" style={{ "--fill": "0%" } as React.CSSProperties}>
+      {/* Glass tube outer */}
+      <div className="relative w-[52%] h-[92%] flex flex-col">
+        {/* Top rim */}
+        <div
+          className="relative z-10 h-[6px] rounded-t-[6px] mx-[-2px]"
+          style={{
+            background: "linear-gradient(180deg, #a0a8b8 0%, #c8cdd6 50%, #b0b7c4 100%)",
+            boxShadow: "0 1px 3px rgba(0,0,0,0.12)",
+          }}
+        />
+
+        {/* Glass body */}
+        <div
+          className="relative flex-1 overflow-hidden"
+          style={{
+            background: "linear-gradient(135deg, rgba(220,225,235,0.25) 0%, rgba(200,208,220,0.12) 40%, rgba(220,225,235,0.18) 100%)",
+            borderLeft: "1.5px solid rgba(180,188,200,0.4)",
+            borderRight: "1.5px solid rgba(180,188,200,0.3)",
+            boxShadow: "inset 2px 0 8px rgba(255,255,255,0.3), inset -2px 0 6px rgba(0,0,0,0.03)",
+          }}
+        >
+          {/* Glass highlight streak */}
+          <div
+            className="absolute top-0 bottom-0 w-[3px] left-[18%] z-10 pointer-events-none"
+            style={{
+              background: "linear-gradient(180deg, rgba(255,255,255,0.45) 0%, rgba(255,255,255,0.15) 60%, rgba(255,255,255,0.3) 100%)",
+              borderRadius: "2px",
+            }}
+          />
+          <div
+            className="absolute top-[10%] bottom-[15%] w-[1.5px] left-[28%] z-10 pointer-events-none"
+            style={{
+              background: "linear-gradient(180deg, rgba(255,255,255,0.2) 0%, rgba(255,255,255,0.05) 100%)",
+              borderRadius: "1px",
+            }}
+          />
+
+          {/* Liquid fill */}
+          <div
+            className="absolute bottom-0 left-0 right-0 transition-none"
+            style={{
+              height: "var(--fill)",
+              background: `linear-gradient(180deg, ${medColor} 0%, ${fullColor} 40%, ${fullColor} 100%)`,
+            }}
+          >
+            {/* Liquid surface / meniscus */}
+            <div
+              className="absolute top-0 left-0 right-0 h-[6px]"
+              style={{
+                background: `linear-gradient(180deg, rgba(255,255,255,0.45) 0%, ${medColor} 100%)`,
+                borderRadius: "0 0 50% 50% / 0 0 100% 100%",
+              }}
+            />
+            {/* Liquid highlight */}
+            <div
+              className="absolute top-[8px] bottom-[10%] w-[4px] left-[20%] pointer-events-none"
+              style={{
+                background: "linear-gradient(180deg, rgba(255,255,255,0.25) 0%, rgba(255,255,255,0.05) 100%)",
+                borderRadius: "2px",
+              }}
+            />
+            {/* Subtle bubbles when filling */}
+            <div
+              className="absolute bottom-[12%] left-[40%] w-[4px] h-[4px] rounded-full pointer-events-none"
+              style={{
+                background: `rgba(255,255,255,0.25)`,
+                opacity: fillTarget > 0.05 ? 1 : 0,
+              }}
+            />
+            <div
+              className="absolute bottom-[25%] left-[55%] w-[3px] h-[3px] rounded-full pointer-events-none"
+              style={{
+                background: `rgba(255,255,255,0.2)`,
+                opacity: fillTarget > 0.1 ? 1 : 0,
+              }}
+            />
+          </div>
+        </div>
+
+        {/* Rounded bottom */}
+        <div
+          className="relative h-[16%] overflow-hidden"
+          style={{
+            borderLeft: "1.5px solid rgba(180,188,200,0.4)",
+            borderRight: "1.5px solid rgba(180,188,200,0.3)",
+          }}
+        >
+          {/* Glass bottom curve */}
+          <div
+            className="absolute inset-0"
+            style={{
+              background: "linear-gradient(135deg, rgba(220,225,235,0.25) 0%, rgba(200,208,220,0.12) 100%)",
+              borderRadius: "0 0 50% 50% / 0 0 100% 100%",
+              borderBottom: "1.5px solid rgba(180,188,200,0.35)",
+            }}
+          />
+          {/* Liquid in bottom curve */}
+          <div
+            className="absolute inset-0"
+            style={{
+              background: fillTarget > 0 ? `${fullColor}` : "transparent",
+              borderRadius: "0 0 50% 50% / 0 0 100% 100%",
+              opacity: fillTarget > 0 ? 1 : 0,
+              transition: "opacity 0.3s ease",
+            }}
+          />
+          {/* Bottom highlight */}
+          <div
+            className="absolute top-0 left-[15%] w-[3px] h-[60%] pointer-events-none"
+            style={{
+              background: "linear-gradient(180deg, rgba(255,255,255,0.3) 0%, rgba(255,255,255,0) 100%)",
+              borderRadius: "2px",
+            }}
+          />
+        </div>
+
+        {/* Shadow under tube */}
+        <div
+          className="absolute -bottom-[4px] left-[10%] right-[10%] h-[8px] pointer-events-none"
+          style={{
+            background: "radial-gradient(ellipse at center, rgba(0,0,0,0.08) 0%, transparent 70%)",
+          }}
+        />
+      </div>
+
+      {/* Background glow from liquid */}
+      {fillTarget > 0 && (
+        <div
+          className="absolute bottom-0 left-[15%] right-[15%] pointer-events-none"
+          style={{
+            height: "var(--fill)",
+            maxHeight: "92%",
+            background: `radial-gradient(ellipse at center, ${lightColor} 0%, transparent 70%)`,
+            filter: "blur(8px)",
+          }}
+        />
+      )}
+    </div>
   );
 }
 
