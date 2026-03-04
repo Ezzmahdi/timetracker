@@ -234,7 +234,9 @@ export const useTimeStore = create<TimeStore>((set, get) => ({
 
   removeTube: async (id) => {
     const { mode, currentDate, periods, userId } = get();
-    const key = periodKey(currentDate, mode);
+    // In day mode, tube ID is the week tube ID
+    const weekKey = periodKey(currentDate, "week");
+    const key = mode === "day" ? weekKey : periodKey(currentDate, mode);
     const pd = periods[key];
     if (!pd) return;
 
@@ -265,7 +267,9 @@ export const useTimeStore = create<TimeStore>((set, get) => ({
 
   renameTube: async (id, name) => {
     const { mode, currentDate, periods, userId } = get();
-    const key = periodKey(currentDate, mode);
+    // In day mode, the tube ID is the week tube ID
+    const weekKey = periodKey(currentDate, "week");
+    const key = mode === "day" ? weekKey : periodKey(currentDate, mode);
     const pd = periods[key];
     if (!pd) return;
 
